@@ -1,6 +1,5 @@
 # Data
-Garmin/
-*.csv
+data/
 
 # Python-generated files
 __pycache__/
