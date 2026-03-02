@@ -1,27 +1,20 @@
-# app.py
-# Run: streamlit run app.py
-#
-# Update:
-# - Theme-aware Plotly charts (auto-detects Streamlit light/dark mode)
-# - Interactive heatmaps for weekday grids with proper contrast
-# - Shift analysis (before/after) now uses interactive Plotly bar charts
-# - Added manual theme override for reliability
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 from collections import defaultdict
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from prepare_data import check_data_is_fresh, OUTPUT_CSV, STT_PATH, copy_files
+
+if not check_data_is_fresh():
+    print("Data out of date. Copying...")
+    copy_files()
 
 st.set_page_config(page_title="Sleep & Time Dashboard", layout="wide")
 
-# -----------------------------
-# Theme Detection & Configuration
-# -----------------------------
+
 def get_theme_config():
     """Detect Streamlit theme and return appropriate colors."""
-    # Check for manual override first
     manual_theme = st.session_state.get("chart_theme", "Auto")
 
     if manual_theme == "Dark":
@@ -29,7 +22,6 @@ def get_theme_config():
     elif manual_theme == "Light":
         is_dark = False
     else:
-        # Auto-detect (may fail in some contexts)
         is_dark = True
         try:
             theme = st.theme()
@@ -51,9 +43,7 @@ def get_theme_config():
         "zero_line": "rgba(255,255,255,0.5)" if is_dark else "rgba(0,0,0,0.5)",
     }
 
-# -----------------------------
-# CSS: constrain visual block width
-# -----------------------------
+
 def apply_max_width_css(max_px: int):
     st.markdown(
         f"""
@@ -71,11 +61,10 @@ div[data-testid="stPyplotFigure"] {{
         unsafe_allow_html=True,
     )
 
-# -----------------------------
-# Helpers
-# -----------------------------
+
 def to_datetime_safe(s):
     return pd.to_datetime(s, errors="coerce")
+
 
 def split_interval_by_day(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
     cur = start_dt
@@ -87,23 +76,31 @@ def split_interval_by_day(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
     mins = (end_dt - cur).total_seconds() / 60.0
     yield pd.Timestamp(cur.date()), mins
 
+
 def smooth_series(s: pd.Series, window: int) -> pd.Series:
     if window <= 1:
         return s
     return s.rolling(window, min_periods=1).mean()
 
-def pre_post_shift(df: pd.DataFrame, cols: list[str], split_date: pd.Timestamp, window_days: int):
+
+def pre_post_shift(
+    df: pd.DataFrame, cols: list[str], split_date: pd.Timestamp, window_days: int
+):
     split_date = pd.Timestamp(split_date).floor("D")
-    pre = df[(df.index >= split_date - pd.Timedelta(days=window_days)) & (df.index < split_date)]
-    post = df[(df.index >= split_date) & (df.index < split_date + pd.Timedelta(days=window_days))]
+    pre = df[
+        (df.index >= split_date - pd.Timedelta(days=window_days))
+        & (df.index < split_date)
+    ]
+    post = df[
+        (df.index >= split_date)
+        & (df.index < split_date + pd.Timedelta(days=window_days))
+    ]
     pre_m = pre[cols].mean()
     post_m = post[cols].mean()
     delta = post_m - pre_m
     return pre_m, post_m, delta, len(pre), len(post)
 
-# -----------------------------
-# Data Loading
-# -----------------------------
+
 @st.cache_data(show_spinner=False)
 def load_sleep_csv(path_or_file) -> pd.DataFrame:
     df = pd.read_csv(path_or_file)
@@ -118,6 +115,7 @@ def load_sleep_csv(path_or_file) -> pd.DataFrame:
 
     df["watch_sleep_h"] = df["total_sleep_m"] / 60.0
     return df.set_index("date")
+
 
 @st.cache_data(show_spinner=False)
 def load_time_csv(path_or_file) -> pd.DataFrame:
@@ -143,6 +141,7 @@ def load_time_csv(path_or_file) -> pd.DataFrame:
     df["categories"] = df["categories"].fillna("").astype(str)
     return df
 
+
 @st.cache_data(show_spinner=False)
 def build_daily_time_aggregates(tt: pd.DataFrame) -> pd.DataFrame:
     daily = defaultdict(lambda: defaultdict(float))
@@ -152,7 +151,9 @@ def build_daily_time_aggregates(tt: pd.DataFrame) -> pd.DataFrame:
         s = row.time_started
         e = row.time_ended
         cats = str(row.categories).strip()
-        cat_list = [c.strip() for c in cats.split(",") if c.strip()] or ["(uncategorized)"]
+        cat_list = [c.strip() for c in cats.split(",") if c.strip()] or [
+            "(uncategorized)"
+        ]
 
         is_sleep_activity = str(row.activity_name).lower() == "sleep"
         has_sleep_cat = any(c == "Sleep" for c in cat_list)
@@ -179,9 +180,7 @@ def build_daily_time_aggregates(tt: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(out).set_index("date").sort_index()
 
-# -----------------------------
-# Plotly: Interactive Heatmap (Theme-Aware)
-# -----------------------------
+
 def weekday_metric_grid_plotly(
     df: pd.DataFrame,
     cols: list[str],
@@ -196,11 +195,18 @@ def weekday_metric_grid_plotly(
     theme = get_theme_config()
     tmp = df.copy()
     tmp["weekday"] = tmp.index.day_name()
-    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    order = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
 
     wk = tmp.groupby("weekday")[cols].mean().reindex(order)
 
-    # Build Z (normalized) and text
     z_vals = []
     text_vals = []
     hover_texts = []
@@ -232,46 +238,55 @@ def weekday_metric_grid_plotly(
                 else:
                     val_str = f"{val:.0f}"
                 text_row.append(val_str)
-                goodness = "Higher=better" if good_high.get(metric, True) else "Lower=better"
-                hover_row.append(f"<b>{metric}</b><br>{day}: {val_str}<br><i>({goodness})</i>")
+                goodness = (
+                    "Higher=better" if good_high.get(metric, True) else "Lower=better"
+                )
+                hover_row.append(
+                    f"<b>{metric}</b><br>{day}: {val_str}<br><i>({goodness})</i>"
+                )
 
         z_vals.append(z_row)
         text_vals.append(text_row)
         hover_texts.append(hover_row)
 
-    # White -> Green colorscale (works in both themes as cells provide background)
     colorscale = [
         [0.0, "rgb(255, 255, 255)"],
         [0.5, "rgb(153, 217, 153)"],
-        [1.0, "rgb(51, 179, 51)"]
+        [1.0, "rgb(51, 179, 51)"],
     ]
 
-    fig = go.Figure(data=go.Heatmap(
-        z=z_vals,
-        x=[d[:3] for d in order],
-        y=cols,
-        text=text_vals,
-        texttemplate="%{text}",
-        textfont={"size": 13, "color": "#000000"},
-        colorscale=colorscale,
-        showscale=True,
-        zmin=0,
-        zmax=1,
-        colorbar=dict(
-            title=dict(text="Relative<br>Score", side="right", font=dict(color=theme["text"])),
-            tickmode="array",
-            tickvals=[0, 0.5, 1],
-            ticktext=["Low", "Med", "High"],
-            tickfont=dict(color=theme["text"]),
-            len=0.6,
-            thickness=20,
-            x=1.02,
-            bgcolor=theme["bg_transparent"]
-        ),
-        hoverongaps=False,
-        hoverinfo="text",
-        hovertext=hover_texts,
-    ))
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z_vals,
+            x=[d[:3] for d in order],
+            y=cols,
+            text=text_vals,
+            texttemplate="%{text}",
+            textfont={"size": 13, "color": "#000000"},
+            colorscale=colorscale,
+            showscale=True,
+            zmin=0,
+            zmax=1,
+            colorbar=dict(
+                title=dict(
+                    text="Relative<br>Score",
+                    side="right",
+                    font=dict(color=theme["text"]),
+                ),
+                tickmode="array",
+                tickvals=[0, 0.5, 1],
+                ticktext=["Low", "Med", "High"],
+                tickfont=dict(color=theme["text"]),
+                len=0.6,
+                thickness=20,
+                x=1.02,
+                bgcolor=theme["bg_transparent"],
+            ),
+            hoverongaps=False,
+            hoverinfo="text",
+            hovertext=hover_texts,
+        )
+    )
 
     fig.update_layout(
         title=dict(text=title, x=0.5, font=dict(color=theme["text"], size=14)),
@@ -282,13 +297,13 @@ def weekday_metric_grid_plotly(
             side="top",
             color=theme["text"],
             showgrid=False,
-            tickfont=dict(color=theme["text"], size=12)
+            tickfont=dict(color=theme["text"], size=12),
         ),
         yaxis=dict(
             autorange="reversed",
             color=theme["text"],
             showgrid=False,
-            tickfont=dict(color=theme["text"], size=12)
+            tickfont=dict(color=theme["text"], size=12),
         ),
         height=120 + 45 * len(cols),
         margin=dict(l=140, r=80, t=80, b=40),
@@ -296,9 +311,7 @@ def weekday_metric_grid_plotly(
 
     st.plotly_chart(fig, width="stretch")
 
-# -----------------------------
-# Plotly: Time Series (Theme-Aware)
-# -----------------------------
+
 def plot_sleep_dual_axis_plotly(df: pd.DataFrame, smooth_window: int, split_date=None):
     theme = get_theme_config()
     left_cols = ["sleep_score", "hrv_ms", "rem_m", "awake_m"]
@@ -335,7 +348,12 @@ def plot_sleep_dual_axis_plotly(df: pd.DataFrame, smooth_window: int, split_date
         )
 
     if split_date is not None:
-        fig.add_vline(x=pd.Timestamp(split_date), line_dash="dash", line_color=theme["text_secondary"], opacity=0.7)
+        fig.add_vline(
+            x=pd.Timestamp(split_date),
+            line_dash="dash",
+            line_color=theme["text_secondary"],
+            opacity=0.7,
+        )
 
     fig.update_layout(
         hovermode="x unified",
@@ -346,7 +364,7 @@ def plot_sleep_dual_axis_plotly(df: pd.DataFrame, smooth_window: int, split_date
             y=1.02,
             xanchor="left",
             x=0,
-            font=dict(color=theme["text"])
+            font=dict(color=theme["text"]),
         ),
         paper_bgcolor=theme["bg_transparent"],
         plot_bgcolor=theme["bg_transparent"],
@@ -357,25 +375,30 @@ def plot_sleep_dual_axis_plotly(df: pd.DataFrame, smooth_window: int, split_date
             color=theme["text"],
             gridcolor=theme["grid"],
             showgrid=True,
-            tickfont=dict(color=theme["text"])
+            tickfont=dict(color=theme["text"]),
         ),
         yaxis=dict(
             color=theme["text"],
             gridcolor=theme["grid"],
-            title=dict(text="Score / ms / minutes", font=dict(color=theme["text_secondary"])),
-            tickfont=dict(color=theme["text"])
+            title=dict(
+                text="Score / ms / minutes", font=dict(color=theme["text_secondary"])
+            ),
+            tickfont=dict(color=theme["text"]),
         ),
         yaxis2=dict(
             color=theme["text"],
             gridcolor=theme["grid"],
             title=dict(text="Hours", font=dict(color=theme["text_secondary"])),
-            tickfont=dict(color=theme["text"])
+            tickfont=dict(color=theme["text"]),
         ),
     )
 
     st.plotly_chart(fig, width="stretch")
 
-def plot_diff_tracker_vs_watch_plotly(merged_df: pd.DataFrame, smooth_window: int, split_date=None):
+
+def plot_diff_tracker_vs_watch_plotly(
+    merged_df: pd.DataFrame, smooth_window: int, split_date=None
+):
     theme = get_theme_config()
     if "Sleep_h" not in merged_df.columns or "watch_sleep_h" not in merged_df.columns:
         st.caption("Tracker sleep or watch sleep missing for the difference plot.")
@@ -399,22 +422,33 @@ def plot_diff_tracker_vs_watch_plotly(merged_df: pd.DataFrame, smooth_window: in
     fig.add_hline(y=0, line_width=1.5, line_color=theme["zero_line"])
 
     if split_date is not None:
-        fig.add_vline(x=pd.Timestamp(split_date), line_dash="dash", line_color=theme["text_secondary"], opacity=0.7)
+        fig.add_vline(
+            x=pd.Timestamp(split_date),
+            line_dash="dash",
+            line_color=theme["text_secondary"],
+            opacity=0.7,
+        )
 
     fig.update_layout(
         hovermode="x unified",
-        title=dict(text="Tracked sleep vs watch sleep (difference in minutes)", font=dict(color=theme["text"])),
+        title=dict(
+            text="Tracked sleep vs watch sleep (difference in minutes)",
+            font=dict(color=theme["text"]),
+        ),
         xaxis=dict(
             color=theme["text"],
             gridcolor=theme["grid"],
             title=dict(text="Date", font=dict(color=theme["text_secondary"])),
-            tickfont=dict(color=theme["text"])
+            tickfont=dict(color=theme["text"]),
         ),
         yaxis=dict(
             color=theme["text"],
             gridcolor=theme["grid"],
-            title=dict(text="Minutes (Tracker - Watch)", font=dict(color=theme["text_secondary"])),
-            tickfont=dict(color=theme["text"])
+            title=dict(
+                text="Minutes (Tracker - Watch)",
+                font=dict(color=theme["text_secondary"]),
+            ),
+            tickfont=dict(color=theme["text"]),
         ),
         paper_bgcolor=theme["bg_transparent"],
         plot_bgcolor=theme["bg_transparent"],
@@ -425,10 +459,15 @@ def plot_diff_tracker_vs_watch_plotly(merged_df: pd.DataFrame, smooth_window: in
     )
     st.plotly_chart(fig, width="stretch")
 
+
 def plot_time_plotly(df: pd.DataFrame, smooth_window: int, split_date=None):
     theme = get_theme_config()
     fig = go.Figure()
-    colors = {"Required work_h": "#e74c3c", "Beneficial_h": "#27ae60", "Rest_h": "#3498db"}
+    colors = {
+        "Required work_h": "#e74c3c",
+        "Beneficial_h": "#27ae60",
+        "Rest_h": "#3498db",
+    }
 
     for c in ["Required work_h", "Beneficial_h", "Rest_h"]:
         if c in df.columns:
@@ -445,22 +484,29 @@ def plot_time_plotly(df: pd.DataFrame, smooth_window: int, split_date=None):
             )
 
     if split_date is not None:
-        fig.add_vline(x=pd.Timestamp(split_date), line_dash="dash", line_color=theme["text_secondary"], opacity=0.7)
+        fig.add_vline(
+            x=pd.Timestamp(split_date),
+            line_dash="dash",
+            line_color=theme["text_secondary"],
+            opacity=0.7,
+        )
 
     fig.update_layout(
         hovermode="x unified",
-        title=dict(text="Time categories (hours/day, smoothed)", font=dict(color=theme["text"])),
+        title=dict(
+            text="Time categories (hours/day, smoothed)", font=dict(color=theme["text"])
+        ),
         xaxis=dict(
             color=theme["text"],
             gridcolor=theme["grid"],
             title=dict(text="Date", font=dict(color=theme["text_secondary"])),
-            tickfont=dict(color=theme["text"])
+            tickfont=dict(color=theme["text"]),
         ),
         yaxis=dict(
             color=theme["text"],
             gridcolor=theme["grid"],
             title=dict(text="Hours/day", font=dict(color=theme["text_secondary"])),
-            tickfont=dict(color=theme["text"])
+            tickfont=dict(color=theme["text"]),
         ),
         legend=dict(
             orientation="h",
@@ -468,7 +514,7 @@ def plot_time_plotly(df: pd.DataFrame, smooth_window: int, split_date=None):
             y=1.02,
             xanchor="left",
             x=0,
-            font=dict(color=theme["text"])
+            font=dict(color=theme["text"]),
         ),
         paper_bgcolor=theme["bg_transparent"],
         plot_bgcolor=theme["bg_transparent"],
@@ -478,10 +524,10 @@ def plot_time_plotly(df: pd.DataFrame, smooth_window: int, split_date=None):
     )
     st.plotly_chart(fig, width="stretch")
 
-# -----------------------------
-# Plotly: Shift Analysis (Before/After Delta Bars)
-# -----------------------------
-def plot_shift_delta_plotly(delta: pd.Series, pre: pd.Series, post: pd.Series, title: str, ylabel: str):
+
+def plot_shift_delta_plotly(
+    delta: pd.Series, pre: pd.Series, post: pd.Series, title: str, ylabel: str
+):
     """Interactive bar chart showing pre/post shift with hover details."""
     theme = get_theme_config()
 
@@ -489,22 +535,21 @@ def plot_shift_delta_plotly(delta: pd.Series, pre: pd.Series, post: pd.Series, t
 
     fig = go.Figure()
 
-    fig.add_trace(go.Bar(
-        x=delta.index,
-        y=delta.values,
-        marker=dict(
-            color=colors,
-            line=dict(color=theme["text"], width=0.5)
-        ),
-        text=[f"{v:+.2f}" for v in delta.values],
-        textposition="outside",
-        textfont=dict(color=theme["text"], size=12),
-        hovertemplate="<b>%{x}</b><br>" +
-                      "<b>Delta:</b> %{y:.3f}<br>" +
-                      "<b>Pre:</b> %{customdata[0]:.3f}<br>" +
-                      "<b>Post:</b> %{customdata[1]:.3f}<extra></extra>",
-        customdata=np.column_stack((pre.values, post.values))
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=delta.index,
+            y=delta.values,
+            marker=dict(color=colors, line=dict(color=theme["text"], width=0.5)),
+            text=[f"{v:+.2f}" for v in delta.values],
+            textposition="outside",
+            textfont=dict(color=theme["text"], size=12),
+            hovertemplate="<b>%{x}</b><br>"
+            + "<b>Delta:</b> %{y:.3f}<br>"
+            + "<b>Pre:</b> %{customdata[0]:.3f}<br>"
+            + "<b>Post:</b> %{customdata[1]:.3f}<extra></extra>",
+            customdata=np.column_stack((pre.values, post.values)),
+        )
+    )
 
     fig.add_hline(y=0, line_width=2, line_color=theme["zero_line"], layer="below")
 
@@ -517,13 +562,13 @@ def plot_shift_delta_plotly(delta: pd.Series, pre: pd.Series, post: pd.Series, t
             zeroline=True,
             zerolinecolor=theme["zero_line"],
             zerolinewidth=2,
-            tickfont=dict(color=theme["text"])
+            tickfont=dict(color=theme["text"]),
         ),
         xaxis=dict(
             tickangle=45,
             color=theme["text"],
             gridcolor=theme["grid"],
-            tickfont=dict(color=theme["text"])
+            tickfont=dict(color=theme["text"]),
         ),
         paper_bgcolor=theme["bg_transparent"],
         plot_bgcolor=theme["bg_transparent"],
@@ -536,11 +581,11 @@ def plot_shift_delta_plotly(delta: pd.Series, pre: pd.Series, post: pd.Series, t
 
     st.plotly_chart(fig, width="stretch")
 
-# -----------------------------
-# Sidebar: inputs
-# -----------------------------
+
 st.sidebar.header("Layout")
-max_width_px = st.sidebar.slider("Dashboard max width (CSS px)", 700, 1600, 1200, step=50)
+max_width_px = st.sidebar.slider(
+    "Dashboard max width (CSS px)", 700, 1600, 1200, step=50
+)
 apply_max_width_css(max_width_px)
 
 st.sidebar.header("Chart Theme")
@@ -551,24 +596,25 @@ chart_theme = st.sidebar.radio(
     "Select chart text color",
     ["Auto", "Light", "Dark"],
     index=["Auto", "Light", "Dark"].index(st.session_state["chart_theme"]),
-    help="If text appears black on dark background, select 'Dark' to override."
+    help="If text appears black on dark background, select 'Dark' to override.",
 )
 st.session_state["chart_theme"] = chart_theme
 
 st.sidebar.header("Data source")
-use_local = st.sidebar.checkbox("Load CSVs from local paths (instead of upload)", value=True)
-
-default_sleep_path = "daily_health_stats.csv"
-default_time_path = "stt_records.csv"
+use_local = st.sidebar.checkbox(
+    "Load CSVs from local paths (instead of upload)", value=True
+)
 
 sleep_source = None
 time_source = None
 
 if use_local:
-    sleep_source = st.sidebar.text_input("Local sleep CSV path", value=default_sleep_path)
-    time_source = st.sidebar.text_input("Local time CSV path", value=default_time_path)
+    sleep_source = st.sidebar.text_input("Local sleep CSV path", value=OUTPUT_CSV)
+    time_source = st.sidebar.text_input("Local time CSV path", value=STT_PATH)
 else:
-    sleep_file = st.sidebar.file_uploader("Sleep CSV (watch)", type=["csv"], key="sleep")
+    sleep_file = st.sidebar.file_uploader(
+        "Sleep CSV (watch)", type=["csv"], key="sleep"
+    )
     time_file = st.sidebar.file_uploader("Time tracker CSV", type=["csv"], key="time")
     sleep_source = sleep_file
     time_source = time_file
@@ -587,9 +633,6 @@ except Exception as e:
 daily_time = build_daily_time_aggregates(time_df)
 merged = sleep_df.join(daily_time, how="inner")
 
-# -----------------------------
-# Sidebar: filters
-# -----------------------------
 st.sidebar.header("Filters")
 min_date = min(sleep_df.index.min(), daily_time.index.min())
 max_date = max(sleep_df.index.max(), daily_time.index.max())
@@ -617,21 +660,26 @@ sleep_f = sleep_df[(sleep_df.index >= d0) & (sleep_df.index <= d1)].copy()
 time_f = daily_time[(daily_time.index >= d0) & (daily_time.index <= d1)].copy()
 merged_f = merged[(merged.index >= d0) & (merged.index <= d1)].copy()
 
-# -----------------------------
-# Page Layout
-# -----------------------------
 st.title("Sleep & Time Dashboard")
 
 st.header("Sleep over time (dual axis)")
-st.caption("Hover to see all values at that date. Unified tooltip shows all metrics simultaneously.")
+st.caption(
+    "Hover to see all values at that date. Unified tooltip shows all metrics simultaneously."
+)
 plot_sleep_dual_axis_plotly(sleep_f, smooth_window=smooth, split_date=split_ts)
 
 st.subheader("Tracked sleep vs watch sleep (difference)")
 plot_diff_tracker_vs_watch_plotly(merged_f, smooth_window=smooth, split_date=split_ts)
 
 st.header("Sleep weekday profile")
-sleep_week_base = sleep_df[sleep_df.index >= (sleep_df.index.max() - pd.Timedelta(days=week_n_days))].copy()
-sleep_cols = [c for c in ["sleep_score", "watch_sleep_h", "hrv_ms", "rem_m", "awake_m"] if c in sleep_week_base.columns]
+sleep_week_base = sleep_df[
+    sleep_df.index >= (sleep_df.index.max() - pd.Timedelta(days=week_n_days))
+].copy()
+sleep_cols = [
+    c
+    for c in ["sleep_score", "watch_sleep_h", "hrv_ms", "rem_m", "awake_m"]
+    if c in sleep_week_base.columns
+]
 sleep_good_high = {
     "sleep_score": True,
     "watch_sleep_h": True,
@@ -647,8 +695,14 @@ weekday_metric_grid_plotly(
 )
 
 st.header("Sleep shift around selected date")
-sleep_shift_cols = [c for c in ["sleep_score", "watch_sleep_h", "hrv_ms", "rem_m", "awake_m"] if c in sleep_df.columns]
-pre_m, post_m, delta, npre, npost = pre_post_shift(sleep_df, sleep_shift_cols, split_ts, shift_window)
+sleep_shift_cols = [
+    c
+    for c in ["sleep_score", "watch_sleep_h", "hrv_ms", "rem_m", "awake_m"]
+    if c in sleep_df.columns
+]
+pre_m, post_m, delta, npre, npost = pre_post_shift(
+    sleep_df, sleep_shift_cols, split_ts, shift_window
+)
 
 plot_shift_delta_plotly(delta, pre_m, post_m, "Sleep: post - pre (means)", "Delta")
 
@@ -657,8 +711,14 @@ st.caption("Hover to see exact hours for all categories at any date.")
 plot_time_plotly(time_f, smooth_window=smooth, split_date=split_ts)
 
 st.header("Time weekday profile")
-time_week_base = daily_time[daily_time.index >= (daily_time.index.max() - pd.Timedelta(days=week_n_days))].copy()
-time_cols = [c for c in ["Required work_h", "Beneficial_h", "Rest_h"] if c in time_week_base.columns]
+time_week_base = daily_time[
+    daily_time.index >= (daily_time.index.max() - pd.Timedelta(days=week_n_days))
+].copy()
+time_cols = [
+    c
+    for c in ["Required work_h", "Beneficial_h", "Rest_h"]
+    if c in time_week_base.columns
+]
 time_good_high = {"Required work_h": True, "Beneficial_h": True, "Rest_h": True}
 weekday_metric_grid_plotly(
     time_week_base,
@@ -668,10 +728,16 @@ weekday_metric_grid_plotly(
 )
 
 st.header("Time shift around selected date")
-time_shift_cols = [c for c in ["Required work_h", "Beneficial_h", "Rest_h"] if c in daily_time.columns]
-pre_m2, post_m2, delta2, npre2, npost2 = pre_post_shift(daily_time, time_shift_cols, split_ts, shift_window)
+time_shift_cols = [
+    c for c in ["Required work_h", "Beneficial_h", "Rest_h"] if c in daily_time.columns
+]
+pre_m2, post_m2, delta2, npre2, npost2 = pre_post_shift(
+    daily_time, time_shift_cols, split_ts, shift_window
+)
 
-plot_shift_delta_plotly(delta2, pre_m2, post_m2, "Time: post - pre (means)", "Delta (hours/day)")
+plot_shift_delta_plotly(
+    delta2, pre_m2, post_m2, "Time: post - pre (means)", "Delta (hours/day)"
+)
 
 with st.expander("Notes / assumptions"):
     st.markdown(
@@ -682,4 +748,3 @@ with st.expander("Notes / assumptions"):
 - **Data Handling**: Multi-category records split evenly; midnight-spanning records split across days.
 """
     )
-
