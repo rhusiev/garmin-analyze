@@ -24,8 +24,8 @@ def check_data_is_fresh() -> bool:
     if not os.path.exists(RECOVER_STT_PATH) or not os.path.exists(STT_PATH):
         return False
 
-    timestamp1 = os.path.getctime(RECOVER_STT_PATH)
-    timestamp2 = os.path.getctime(STT_PATH)
+    timestamp1 = os.path.getmtime(RECOVER_STT_PATH)
+    timestamp2 = os.path.getmtime(STT_PATH)
 
     return timestamp1 == timestamp2
 
@@ -39,7 +39,7 @@ def copy_files():
     else:
         print("Warning: Gadgetbridge.zip not found")
     if os.path.exists(RECOVER_STT_PATH):
-        shutil.copy2(RECOVER_STT_PATH, DATA_PATH)
+        shutil.copy2(RECOVER_STT_PATH, STT_PATH)
     else:
         print("Warning: stt_records_automatic.csv not found")
     if os.path.exists(DEVICE_PATH):

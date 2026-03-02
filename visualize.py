@@ -9,6 +9,7 @@ from prepare_data import check_data_is_fresh, OUTPUT_CSV, STT_PATH, copy_files
 if not check_data_is_fresh():
     print("Data out of date. Copying...")
     copy_files()
+    print("Done")
 
 st.set_page_config(page_title="Sleep & Time Dashboard", layout="wide")
 
