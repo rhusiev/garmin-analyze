@@ -4,12 +4,11 @@ import numpy as np
 from collections import defaultdict
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from prepare_data import check_data_is_fresh, OUTPUT_CSV, STT_PATH, copy_files
+from prepare_data import check_data_is_fresh, OUTPUT_CSV, STT_PATH, create_csv
 
 if not check_data_is_fresh():
-    print("Data out of date. Copying...")
-    copy_files()
-    print("Done")
+    print("Data out of date")
+    create_csv()
 
 st.set_page_config(page_title="Sleep & Time Dashboard", layout="wide")
 

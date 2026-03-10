@@ -199,7 +199,7 @@ def parse_sleep_file(filepath):
     return stats
 
 
-def main():
+def create_csv():
     print("0. Copying Data...")
     copy_files()
 
@@ -246,4 +246,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    create_csv()
